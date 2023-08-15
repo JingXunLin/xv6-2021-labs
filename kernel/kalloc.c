@@ -13,6 +13,28 @@ void freerange(void *pa_start, void *pa_end);
 
 extern char end[]; // first address after kernel.
                    // defined by kernel.ld.
+struct {
+	struct spinlock lock;
+	int cnt[PHYSTOP / PGSIZE];
+} page_ref_cnt;
+
+void
+add_pgcnt(uint64 pa, int val)
+{
+	acquire(&page_ref_cnt.lock);
+	page_ref_cnt.cnt[pa/PGSIZE]+=val;
+	release(&page_ref_cnt.lock);
+}
+
+int
+get_pgcnt(uint64 pa)
+{
+	int ret;
+	acquire(&page_ref_cnt.lock);
+	ret = page_ref_cnt.cnt[pa/PGSIZE];
+	release(&page_ref_cnt.lock);
+	return ret;
+}
 
 struct run {
   struct run *next;
@@ -26,7 +48,13 @@ struct {
 void
 kinit()
 {
+  initlock(&page_ref_cnt.lock, "page_ref_cnt");
   initlock(&kmem.lock, "kmem");
+
+  acquire(&page_ref_cnt.lock);
+  for(int i=0; i<PHYSTOP/PGSIZE; i++)
+	page_ref_cnt.cnt[i] = 1;
+  release(&page_ref_cnt.lock);
   freerange(end, (void*)PHYSTOP);
 }
 
@@ -51,9 +79,22 @@ kfree(void *pa)
   if(((uint64)pa % PGSIZE) != 0 || (char*)pa < end || (uint64)pa >= PHYSTOP)
     panic("kfree");
 
+  if(get_pgcnt((uint64)pa) <= 0)
+  {
+	  printf("%p %d\n", (uint64)pa, get_pgcnt((uint64)pa));
+	  panic("kfree: page_ref_cnt<=0");
+  } 
+  if((get_pgcnt((uint64)pa)) > 1)
+  {
+	 add_pgcnt((uint64)pa, -1);
+	 return;
+  }	
+ // 有這個會爆炸 應該是某個地方<=0但要free而沒free
+  
+// if(get_pgcnt((uint64)pa) > 0)
+//	  return;
   // Fill with junk to catch dangling refs.
   memset(pa, 1, PGSIZE);
-
   r = (struct run*)pa;
 
   acquire(&kmem.lock);
@@ -77,6 +118,12 @@ kalloc(void)
   release(&kmem.lock);
 
   if(r)
+  {
     memset((char*)r, 5, PGSIZE); // fill with junk
+	acquire(&page_ref_cnt.lock);
+	page_ref_cnt.cnt[(uint64)r/PGSIZE] = 1;
+	release(&page_ref_cnt.lock);
+	
+  }
   return (void*)r;
 }

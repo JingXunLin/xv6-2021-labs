@@ -65,6 +65,13 @@ usertrap(void)
     intr_on();
 
     syscall();
+  } else if(r_scause() == 0xf){
+	// page fault, check if it's COW page
+	uint64 addr = r_stval();
+	if(addr >= MAXVA)
+		p->killed = 1;
+	if(cowalloc(p->pagetable, PGROUNDDOWN(addr)) < 0)
+		p->killed = 1;
   } else if((which_dev = devintr()) != 0){
     // ok
   } else {
