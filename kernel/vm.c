@@ -303,7 +303,7 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
   pte_t *pte;
   uint64 pa, i;
   uint flags;
-  char *mem;
+//  char *mem;
 
   for(i = 0; i < sz; i += PGSIZE){
     if((pte = walk(old, i, 0)) == 0)
@@ -311,14 +311,18 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
     if((*pte & PTE_V) == 0)
       panic("uvmcopy: page not present");
     pa = PTE2PA(*pte);
-    flags = PTE_FLAGS(*pte);
-    if((mem = kalloc()) == 0)
-      goto err;
-    memmove(mem, (char*)pa, PGSIZE);
-    if(mappages(new, i, PGSIZE, (uint64)mem, flags) != 0){
-      kfree(mem);
-      goto err;
+	flags = PTE_FLAGS(*pte);
+	
+	if(flags & PTE_W) {
+    	flags = (flags | PTE_C) & ~PTE_W;	
+		*pte = PA2PTE(pa) | flags;
+	}
+    
+	if(mappages(new, i, PGSIZE, (uint64)pa, flags) != 0){
+//      kfree(mem);
+        goto err;
     }
+	add_pg_cnt((uint64)pa, 1);
   }
   return 0;
 
@@ -350,7 +354,17 @@ copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
 
   while(len > 0){
     va0 = PGROUNDDOWN(dstva);
-    pa0 = walkaddr(pagetable, va0);
+	pte_t *pte = walk(pagetable, va0, 0);
+    if(!pte) {
+      printf("Failed to get pa from pgtbl. va: %p\n", va0);
+      return -1;
+    }
+    if(*pte & PTE_C){
+      if(cow(pagetable, va0) < 0){
+        return -1;
+      }
+    }
+	pa0 = walkaddr(pagetable, va0);
     if(pa0 == 0)
       return -1;
     n = PGSIZE - (dstva - va0);
@@ -431,4 +445,42 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
   } else {
     return -1;
   }
+}
+
+int
+cow(pagetable_t pagetable, uint64 va)
+{
+	if(va >= MAXVA) return -1;
+	pte_t *pte = walk(pagetable, va, 0);
+	if(pte == 0) return -1;
+	if((*pte & PTE_V) == 0) return -1;
+	if((*pte & PTE_C) == 0) return -1;
+	if(va % PGSIZE) return 0;
+	
+	uint64 pa = walkaddr(pagetable, va);
+	if(pa == 0) return 0;	
+
+	if(get_pg_cnt(pa) == 1)
+	{
+		*pte |= PTE_W;
+		*pte &= PTE_C;
+		return 0;
+	}
+	else
+	{
+		uint64 flags = PTE_FLAGS(*pte);
+		flags = (flags & ~PTE_C) | PTE_W;
+
+		char *mem;
+		if((mem = kalloc()) == 0) return -1;
+		memmove(mem, (char*)pa, PGSIZE);
+		
+		uvmunmap(pagetable, va, 1, 1);	
+		if(mappages(pagetable, va, PGSIZE, (uint64)mem, flags) != 0)
+		{
+			kfree(mem);
+			return -1;
+		}
+	}
+	return 0;
 }
