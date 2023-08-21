@@ -84,15 +84,26 @@ kfree(void *pa)
 	  printf("%p %d\n", (uint64)pa, get_pgcnt((uint64)pa));
 	  panic("kfree: page_ref_cnt<=0");
   } 
-  if((get_pgcnt((uint64)pa)) > 1)
+  /*if((get_pgcnt((uint64)pa)) > 1)
   {
 	 add_pgcnt((uint64)pa, -1);
 	 return;
-  }	
- // 有這個會爆炸 應該是某個地方<=0但要free而沒free
-  
+  }	*/
+ // 順序顛倒也爛 
+//	 add_pgcnt((uint64)pa, -1);
 // if(get_pgcnt((uint64)pa) > 0)
 //	  return;
+// 沒鎖沒事 有鎖爆炸
+  page_ref_cnt.cnt[(uint64)pa/PGSIZE]--;
+	if(page_ref_cnt.cnt[(uint64)pa/PGSIZE]>0)
+		return;
+	// panic: acquire
+/*  acquire(&page_ref_cnt.lock);
+    page_ref_cnt.cnt[(uint64)pa/PGSIZE]--;
+	if(page_ref_cnt.cnt[(uint64)pa/PGSIZE]>0)
+		return;
+	release(&page_ref_cnt.lock);
+	*/
   // Fill with junk to catch dangling refs.
   memset(pa, 1, PGSIZE);
   r = (struct run*)pa;
