@@ -239,9 +239,7 @@ dns()
     fprintf(2, "ping: connect() failed\n");
     exit(1);
   }
-
   len = dns_req(obuf);
-  
   if(write(fd, obuf, len) < 0){
     fprintf(2, "dns: send() failed\n");
     exit(1);
