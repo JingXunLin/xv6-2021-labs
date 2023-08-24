@@ -102,7 +102,6 @@ e1000_transmit(struct mbuf *m)
   // the TX descriptor ring so that the e1000 sends it. Stash
   // a pointer so that it can be freed after sending.
   //
-  printf("transmitting\n");
   acquire(&e1000_lock);
   uint32 idx = regs[E1000_TDT];
   
@@ -135,13 +134,13 @@ e1000_recv(void)
   // Check for packets that have arrived from the e1000
   // Create and deliver an mbuf for each packet (using net_rx()).
   //
-  printf("receiving\n");
   acquire(&e1000_lock);
   uint32 idx = (regs[E1000_RDT] + 1) % RX_RING_SIZE;
   while(rx_ring[idx].status & E1000_RXD_STAT_DD) {
 	  rx_mbufs[idx]->len = rx_ring[idx].length;
+	  release(&e1000_lock);
 	  net_rx(rx_mbufs[idx]);
-
+	  acquire(&e1000_lock);
 	  rx_mbufs[idx] = mbufalloc(0);
 	  if(rx_mbufs[idx] == 0)
 		  panic("e1000");
